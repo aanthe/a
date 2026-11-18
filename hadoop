@@ -1,0 +1,441 @@
+### Phase 0: Prerequisites & Hadoop Environment Setup
+
+#### 1. Update package lists and install Java (OpenJDK 8 or 11) & SSH
+
+Hadoop requires Java. OpenJDK 8 is historically the most stable for Hadoop ecosystems.
+
+```bash
+sudo apt update && sudo apt upgrade -y
+sudo apt install -y openjdk-8-jdk wget ssh rsync
+
+```
+
+#### 2. Configure Java Environment Variables
+
+Add Java to your profile so Hadoop can find it:
+
+```bash
+echo "export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> ~/.bashrc
+echo "export PATH=\$PATH:\$JAVA_HOME/bin" >> ~/.bashrc
+source ~/.bashrc
+java -version
+
+```
+
+#### 3. Set Up Passwordless SSH for Hadoop
+
+Hadoop uses SSH to manage its daemons.
+
+```bash
+ssh-keygen -t rsa -P '' -f ~/.ssh/id_rsa
+cat ~/.ssh/id_rsa.pub >> ~/.ssh/authorized_keys
+chmod 0600 ~/.ssh/authorized_keys
+ssh localhost
+
+```
+
+*(Type `yes` if prompted to connect, then type `exit` to return to your shell).*
+
+#### 4. Download and Extract Hadoop (v3.3.6 used as a standard stable release)
+
+```bash
+cd ~
+wget https://archive.apache.org/dist/hadoop/common/hadoop-3.3.6/hadoop-3.3.6.tar.gz
+tar -xzvf hadoop-3.3.6.tar.gz
+mv hadoop-3.3.6 hadoop
+
+```
+
+#### 5. Configure Hadoop Environment Variables (`~/.bashrc`)
+
+```bash
+echo "export HADOOP_HOME=\$HOME/hadoop" >> ~/.bashrc
+echo "export PATH=\$PATH:\$HADOOP_HOME/bin:\$HADOOP_HOME/sbin" >> ~/.bashrc
+echo "export HADOOP_CONF_DIR=\$HADOOP_HOME/etc/hadoop" >> ~/.bashrc
+source ~/.bashrc
+
+```
+
+#### 6. Configure Hadoop XML Files
+
+Update Hadoop's core configuration files to run in pseudo-distributed mode.
+
+* **Update `hadoop-env.sh` to point to Java:**
+
+```bash
+echo "export JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64" >> ~/hadoop/etc/hadoop/hadoop-env.sh
+
+```
+
+* **Edit `core-site.xml`:**
+
+```bash
+cat << 'EOF' > ~/hadoop/etc/hadoop/core-site.xml
+<configuration>
+    <property>
+        <name>fs.defaultFS</name>
+        <value>hdfs://localhost:9000</value>
+    </property>
+</configuration>
+EOF
+
+```
+
+* **Edit `hdfs-site.xml`:**
+
+```bash
+cat << 'EOF' > ~/hadoop/etc/hadoop/hdfs-site.xml
+<configuration>
+    <property>
+        <name>dfs.replication</name>
+        <value>1</value>
+    </property>
+</configuration>
+EOF
+
+```
+
+* **Edit `mapred-site.xml`:**
+
+```bash
+cat << 'EOF' > ~/hadoop/etc/hadoop/mapred-site.xml
+<configuration>
+    <property>
+        <name>mapreduce.framework.name</name>
+        <value>yarn</value>
+    </property>
+</configuration>
+EOF
+
+```
+
+* **Edit `yarn-site.xml`:**
+
+```bash
+cat << 'EOF' > ~/hadoop/etc/hadoop/yarn-site.xml
+<configuration>
+    <property>
+        <name>yarn.nodemanager.aux-services</name>
+        <value>mapreduce_shuffle</value>
+    </property>
+</configuration>
+EOF
+
+```
+
+#### 7. Format the HDFS NameNode
+
+*(Only run this once on a brand-new setup)*
+
+```bash
+hdfs namenode -format
+
+```
+
+---
+
+### Phase 1: Hadoop Initialization & HDFS Data Preparation
+
+#### 1. Start Hadoop services
+
+```bash
+start-dfs.sh
+start-yarn.sh
+
+```
+
+#### 2. Verify Hadoop services
+
+```bash
+jps
+
+```
+
+*(You should see NameNode, DataNode, ResourceManager, NodeManager, and SecondaryNameNode).*
+
+#### 3. Create HDFS project directories
+
+```bash
+hdfs dfs -mkdir -p /user/$USER/login_project/input
+
+```
+
+#### 4. Copy log file from Windows to Ubuntu
+
+Ensure you have a sample log file at your Windows Downloads folder, or create a mock one directly in Ubuntu if needed.
+
+```bash
+cp "/mnt/c/Users/ASUS ROG/Downloads/sample.log" "$HOME/sample.log"
+
+```
+
+*(If you don't have the file yet, create a test file via `nano $HOME/sample.log` with lines like: `2026-03-30 10:00:00 | user=sanwar | event=LOGIN | status=SUCCESS`)*
+
+#### 5. Verify local log file
+
+```bash
+ls -lh "$HOME/sample.log"
+
+```
+
+#### 6. Upload log file to HDFS
+
+```bash
+hdfs dfs -put "$HOME/sample.log" /user/$USER/login_project/input/
+
+```
+
+#### 7. Verify HDFS input file
+
+```bash
+hdfs dfs -ls /user/$USER/login_project/input/
+
+```
+
+#### 8. Display input log file
+
+```bash
+hdfs dfs -cat /user/$USER/login_project/input/sample.log
+
+```
+
+---
+
+### Phase 2: Project Setup & MapReduce Source Code
+
+#### 9. Create project directory
+
+```bash
+mkdir -p "$HOME/LoginDurationProject/src"
+cd "$HOME/LoginDurationProject"
+
+```
+
+#### 10. Create Java source file
+
+Create the complete Java program containing the Mapper, Reducer, and Driver classes handling two sequential MapReduce jobs (Job 1: calculate durations per user session; Job 2: find the maximum login duration).
+
+```bash
+nano src/LoginDuration.java
+
+```
+
+Paste the following complete Java code into `src/LoginDuration.java`:
+
+```java
+import java.io.IOException;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.Collections;
+import java.util.List;
+
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.hadoop.io.LongWritable;
+import org.apache.hadoop.io.Text;
+import org.apache.hadoop.mapreduce.Job;
+import org.apache.hadoop.mapreduce.Mapper;
+import org.apache.hadoop.mapreduce.Reducer;
+import org.apache.hadoop.mapreduce.lib.input.FileInputFormat;
+import org.apache.hadoop.mapreduce.lib.output.FileOutputFormat;
+
+public class LoginDuration {
+
+    private static final DateTimeFormatter FORMAT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+
+    // Mapper Class
+    public static class LoginMapper extends Mapper<LongWritable, Text, Text, Text> {
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String[] fields = value.toString().split("\\s*\\|\\s*");
+            if (fields.length < 4) return;
+            
+            String timestamp = fields[0].trim();
+            String user = "";
+            String event = "";
+            String status = "";
+
+            for (String field : fields) {
+                field = field.trim();
+                if (field.startsWith("user="))
+                    user = field.substring(5);
+                if (field.startsWith("event="))
+                    event = field.substring(6);
+                if (field.startsWith("status="))
+                    status = field.substring(7);
+            }
+
+            if (!user.isEmpty() && status.equals("SUCCESS") && (event.equals("LOGIN") || event.equals("LOGOUT"))) {
+                context.write(new Text(user), new Text(timestamp + "|" + event));
+            }
+        }
+    }
+
+    // Reducer Class for Job 1: Calculate Total/Session Durations per User
+    public static class LoginReducer extends Reducer<Text, Text, Text, Text> {
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            List<LocalDateTime> logins = new ArrayList<>();
+            List<LocalDateTime> logouts = new ArrayList<>();
+
+            for (Text val : values) {
+                String[] parts = val.toString().split("\\|");
+                LocalDateTime time = LocalDateTime.parse(parts[0], FORMAT);
+                if (parts[1].equals("LOGIN")) {
+                    logins.add(time);
+                } else if (parts[1].equals("LOGOUT")) {
+                    logouts.add(time);
+                }
+            }
+
+            Collections.sort(logins);
+            Collections.sort(logouts);
+
+            long totalSeconds = 0;
+            int minSize = Math.min(logins.size(), logouts.size());
+            for (int i = 0; i < minSize; i++) {
+                if (logouts.get(i).isAfter(logins.get(i))) {
+                    totalSeconds += Duration.between(logins.get(i), logouts.get(i)).getSeconds();
+                }
+            }
+
+            context.write(key, new Text(String.valueOf(totalSeconds)));
+        }
+    }
+
+    // Mapper for Job 2: Pass data to find maximum
+    public static class MaxMapper extends Mapper<LongWritable, Text, Text, Text> {
+        public void map(LongWritable key, Text value, Context context) throws IOException, InterruptedException {
+            String[] parts = value.toString().split("\\s+");
+            if (parts.length >= 2) {
+                context.write(new Text("MaxDuration"), new Text(parts[0] + "\t" + parts[1]));
+            }
+        }
+    }
+
+    // Reducer for Job 2: Find maximum duration user
+    public static class MaxReducer extends Reducer<Text, Text, Text, Text> {
+        public void reduce(Text key, Iterable<Text> values, Context context) throws IOException, InterruptedException {
+            String maxUser = "";
+            long maxSecs = -1;
+
+            for (Text val : values) {
+                String[] parts = val.toString().split("\\s+");
+                if (parts.length >= 2) {
+                    String user = parts[0];
+                    long secs = Long.parseLong(parts[1]);
+                    if (secs > maxSecs) {
+                        maxSecs = secs;
+                        maxUser = user;
+                    }
+                }
+            }
+            context.write(new Text(maxUser), new Text(maxSecs + " seconds"));
+        }
+    }
+
+    // Driver Code
+    public static void main(String[] args) throws Exception {
+        Configuration conf = new Configuration();
+        
+        // Job 1: Calculate user durations
+        Job job1 = Job.getInstance(conf, "Login Duration Calculation");
+        job1.setJarByClass(LoginDuration.class);
+        job1.setMapperClass(LoginMapper.class);
+        job1.setReducerClass(LoginReducer.class);
+        job1.setOutputKeyClass(Text.class);
+        job1.setOutputValueClass(Text.class);
+        FileInputFormat.addInputPath(job1, new Path(args[0]));
+        FileOutputFormat.setOutputPath(job1, new Path(args[1]));
+        boolean success = job1.waitForCompletion(true);
+        if (!success) System.exit(1);
+
+        // Job 2: Find Maximum Duration
+        Job job2 = Job.getInstance(conf, "Max Login Duration");
+        job2.setJarByClass(LoginDuration.class);
+        job2.setMapperClass(MaxMapper.class);
+        job2.setReducerClass(MaxReducer.class);
+        job2.setOutputKeyClass(Text.class);
+        job2.setOutputValueClass(Text.class);
+        FileInputFormat.addInputPath(job2, new Path(args[1]));
+        FileOutputFormat.setOutputPath(job2, new Path(args[2]));
+        System.exit(job2.waitForCompletion(true) ? 0 : 1);
+    }
+}
+
+```
+
+---
+
+### Phase 3: Compilation, Execution & Verification
+
+#### 11. Compile Java program
+
+```bash
+rm -rf build
+mkdir build
+javac -cp "$(hadoop classpath)" -d build src/LoginDuration.java
+
+```
+
+#### 12. Verify compiled classes
+
+```bash
+find build -type f
+
+```
+
+#### 13. Create JAR file
+
+```bash
+jar -cvf LoginDuration.jar -C build .
+
+```
+
+#### 14. Remove previous output directories
+
+```bash
+hdfs dfs -rm -r -f /user/$USER/login_project/output1
+hdfs dfs -rm -r -f /user/$USER/login_project/output2
+
+```
+
+#### 15. Execute both MapReduce jobs
+
+```bash
+hadoop jar LoginDuration.jar LoginDuration \
+/user/$USER/login_project/input \
+/user/$USER/login_project/output1 \
+/user/$USER/login_project/output2
+
+```
+
+#### 16. Display individual user durations
+
+```bash
+hdfs dfs -cat /user/$USER/login_project/output1/part-r-00000
+
+```
+
+#### 17. Display maximum login duration
+
+```bash
+hdfs dfs -cat /user/$USER/login_project/output2/part-r-00000
+
+```
+
+#### 18. Verify output directories
+
+```bash
+hdfs dfs -ls /user/$USER/login_project/output1
+hdfs dfs -ls /user/$USER/login_project/output2
+
+```
+
+#### 19. Stop Hadoop services after completion
+
+```bash
+stop-yarn.sh
+stop-dfs.sh
+
+```

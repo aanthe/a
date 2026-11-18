@@ -1,0 +1,266 @@
+#3
+# ============================================================
+# PRACTICAL: MAPREDUCE AND HIVE-STYLE SQL USING PYSPARK
+# DATASET: STUDENT PERFORMANCE
+# ============================================================
+
+!pip install -q pyspark
+
+# STEP 1: IMPORT LIBRARIES
+
+from pyspark.sql import SparkSession
+from pyspark.sql.functions import col
+
+# STEP 2: INITIALIZE SPARK SESSION
+
+spark = SparkSession.builder \
+    .appName("StudentPerformance_MapReduce_HiveQL") \
+    .getOrCreate()
+
+sc = spark.sparkContext
+
+print("Spark Session Initialized Successfully!")
+
+# ============================================================
+# STEP 3: CREATE OUR OWN DATASET
+# ============================================================
+
+data = [
+    (101, "CS", "M", 85, 20),
+    (102, "IT", "F", 90, 21),
+    (103, "CS", "F", 70, 20),
+    (104, "IT", "M", 60, 22),
+    (105, "CS", "M", 95, 21),
+    (106, "EC", "F", 55, 20),
+    (107, "EC", "M", 75, 22),
+    (108, "IT", "F", 88, 21),
+    (109, "CS", "F", 45, 20),
+    (110, "EC", "M", 92, 23),
+    (111, "IT", "M", 78, 22),
+    (112, "CS", "F", 65, 21)
+]
+
+columns = [
+    "Student_ID",
+    "Department",
+    "Gender",
+    "Marks",
+    "Age"
+]
+
+df = spark.createDataFrame(data, columns)
+
+print("\n========== DATASET ==========")
+
+df.show()
+
+print("========== SCHEMA ==========")
+df.printSchema()
+
+print("Total Records:", df.count())
+
+# STEP 4: REGISTER TEMPORARY VIEW
+
+df.createOrReplaceTempView("students")
+
+print("\nTemporary SQL View Created Successfully!")
+
+# ============================================================
+# PART A: MAPREDUCE USING RDD
+# OBJECTIVE: TOTAL MARKS PER DEPARTMENT
+# ============================================================
+
+print("\n========== PART A: MAPREDUCE ==========")
+
+# MAP: Create (Department, Marks) key-value pairs
+
+mapped_rdd = df.rdd.map(
+    lambda row: (row["Department"], row["Marks"])
+)
+
+# REDUCE: Add marks belonging to the same department
+
+reduced_rdd = mapped_rdd.reduceByKey(
+    lambda a, b: a + b
+)
+
+# SORT RESULTS
+
+sorted_rdd = reduced_rdd.sortBy(
+    lambda x: x[1],
+    ascending=False
+)
+
+print("Total Marks Per Department:")
+
+for department, total_marks in sorted_rdd.collect():
+    print(department, ":", total_marks)
+
+
+# ============================================================
+# PART B: HIVE-STYLE SQL QUERIES
+# ============================================================
+
+# QUERY 1: DEPARTMENT-WISE STATISTICS
+
+print("\n========== QUERY 1: DEPARTMENT STATISTICS ==========")
+
+q1 = spark.sql("""
+    SELECT
+        Department,
+        COUNT(*) AS total_students,
+        SUM(Marks) AS total_marks,
+        ROUND(AVG(Marks), 2) AS average_marks,
+        MAX(Marks) AS highest_marks
+
+    FROM students
+
+    GROUP BY Department
+
+    ORDER BY total_marks DESC
+""")
+
+q1.show()
+
+
+# QUERY 2: TOP 5 STUDENTS
+
+print("\n========== QUERY 2: TOP 5 STUDENTS ==========")
+
+q2 = spark.sql("""
+    SELECT
+        Student_ID,
+        Department,
+        Marks
+
+    FROM students
+
+    ORDER BY Marks DESC
+
+    LIMIT 5
+""")
+
+q2.show()
+
+
+# QUERY 3: CLASSIFICATION USING CASE WHEN
+
+print("\n========== QUERY 3: STUDENT CLASSIFICATION ==========")
+
+q3 = spark.sql("""
+    SELECT
+        CASE
+            WHEN Marks >= 80 THEN 'High'
+            WHEN Marks >= 50 THEN 'Medium'
+            ELSE 'Low'
+        END AS performance,
+
+        COUNT(*) AS total_students,
+        ROUND(AVG(Marks), 2) AS average_marks
+
+    FROM students
+
+    GROUP BY performance
+
+    ORDER BY performance
+""")
+
+q3.show()
+
+
+# QUERY 4: GENDER-WISE ANALYSIS
+
+print("\n========== QUERY 4: GENDER ANALYSIS ==========")
+
+q4 = spark.sql("""
+    SELECT
+        Gender,
+        COUNT(*) AS total_students,
+        ROUND(AVG(Marks), 2) AS average_marks,
+        SUM(Marks) AS total_marks
+
+    FROM students
+
+    GROUP BY Gender
+
+    ORDER BY average_marks DESC
+""")
+
+q4.show()
+
+
+# QUERY 5: FILTER STUDENTS ABOVE OVERALL AVERAGE
+
+print("\n========== QUERY 5: ABOVE AVERAGE STUDENTS ==========")
+
+q5 = spark.sql("""
+    SELECT
+        Student_ID,
+        Department,
+        Marks
+
+    FROM students
+
+    WHERE Marks > (
+        SELECT AVG(Marks)
+        FROM students
+    )
+
+    ORDER BY Marks DESC
+""")
+
+q5.show()
+
+
+# QUERY 6: WINDOW FUNCTION - TOP 2 STUDENTS
+# IN EACH DEPARTMENT
+
+print("\n========== QUERY 6: TOP 2 PER DEPARTMENT ==========")
+
+q6 = spark.sql("""
+    SELECT
+        Student_ID,
+        Department,
+        Marks,
+        student_rank
+
+    FROM (
+        SELECT
+            Student_ID,
+            Department,
+            Marks,
+
+            DENSE_RANK() OVER (
+                PARTITION BY Department
+                ORDER BY Marks DESC
+            ) AS student_rank
+
+        FROM students
+
+    ) ranked_students
+
+    WHERE student_rank <= 2
+
+    ORDER BY Department, student_rank
+""")
+
+q6.show()
+
+
+# ============================================================
+# FINAL OUTPUT
+# ============================================================
+
+print("\n======================================")
+print("ALL OPERATIONS COMPLETED SUCCESSFULLY")
+print("======================================")
+
+print("1. Dataset Created")
+print("2. Spark Session Initialized")
+print("3. MapReduce Completed")
+print("4. Six SQL Queries Executed")
+print("5. Practical Completed Successfully")
+
+# ============================================================
+# END OF PROGRAM
+# ============================================================
